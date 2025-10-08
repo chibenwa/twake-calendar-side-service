@@ -39,6 +39,7 @@ import com.linagora.calendar.storage.model.UploadedMimeType;
 
 import io.netty.handler.codec.http.HttpMethod;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 import reactor.netty.http.server.HttpServerRequest;
 import reactor.netty.http.server.HttpServerResponse;
 
@@ -107,6 +108,7 @@ public class ImportRoute extends CalendarRoute {
                 importProcessor.process(importType, uploadedFile, new OpenPaaSId(baseId), davCollectionId, session)
                     .doOnSuccess(unused -> LOGGER.info("Import of {} with fileId {} completed successfully", importType.name(), request.fileId))
                     .doOnError(ex -> LOGGER.error("Error during import of {} with fileId {}", importType.name(), request.fileId, ex))
+                    .subscribeOn(Schedulers.parallel())
                     .subscribe();
             })
             .then();

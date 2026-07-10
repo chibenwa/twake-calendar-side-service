@@ -15,14 +15,13 @@ are collapsed on the event uid so that a recurring event is surfaced as a single
 guard and could resurrect stale occurrences under concurrent or reordered messages.
 
 When an event is updated, occurrences that are no longer part of it (e.g. a deleted overridden occurrence)
-are pruned with a sequence-bounded delete-by-query: only documents with a strictly older `sequence` than the
-incoming message, and never the documents just written, are removed. A reordered older message therefore
-cannot resurrect a stale occurrence, and removed occurrences no longer linger in the index.
+are pruned with a delete-by-query on document identity: any document for this uid that the incoming message
+did not just write is removed, and only once the recurrence master upsert has won its sequence guard. A
+reordered older message is a no-op on the master and therefore cannot prune, so it cannot resurrect a stale
+occurrence, and removed occurrences no longer linger in the index.
 
 A new `collapseRank` field is added to the OpenSearch calendar event index. It is used as a sort key to keep
-the recurrence master (or a standalone event) as the representative when collapsing on the uid. The existing
-`sequence` field is now indexed (`index: true`) so removed occurrences can be pruned by the sequence-bounded
-delete-by-query.
+the recurrence master (or a standalone event) as the representative when collapsing on the uid.
 
 A new `recurrenceId` field is also added (stored, non-indexed). It carries the `RECURRENCE-ID` of an
 overridden occurrence so that, when such an occurrence is surfaced by search, it keeps its own recurrence id
@@ -33,12 +32,11 @@ instead of falling back to the master's.
 Existing indexed documents do not contain `collapseRank` or `recurrenceId`. Until they are reindexed, the
 collapse sort has no rank to order occurrences by, so an overridden occurrence may be surfaced as the
 representative instead of the master, and a surfaced overridden occurrence has no stored `recurrenceId` to
-return. In addition, the `sequence` field must be indexed for the removed-occurrence pruning to match
-existing documents.
+return.
 
 #### Required Actions
 
-**1. Add `collapseRank` and `recurrenceId`, and make `sequence` searchable in your existing index mapping:**
+**1. Add `collapseRank` and `recurrenceId` to your existing index mapping:**
 
 ```bash
 PUT /calendar_events/_mapping
@@ -51,17 +49,10 @@ PUT /calendar_events/_mapping
     "recurrenceId": {
       "type": "keyword",
       "index": false
-    },
-    "sequence": {
-      "type": "integer",
-      "index": true
     }
   }
 }
 ```
-
-Changing `index` on an existing field is not always accepted by OpenSearch; if the mapping update is
-rejected, create a new index with the updated mapping and reindex into it.
 
 **2. Run a full reindex** so that all existing documents get a `collapseRank` value:
 

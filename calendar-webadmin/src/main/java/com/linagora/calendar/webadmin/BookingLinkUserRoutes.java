@@ -267,7 +267,7 @@ public class BookingLinkUserRoutes implements Routes {
     private BookingLinkInsertRequest parseInsertRequest(Request request) {
         try {
             CreateBookingLinkRequestDTO dto = OBJECT_MAPPER.readValue(request.bodyAsBytes(), CreateBookingLinkRequestDTO.class);
-            return CreateBookingLinkRequestDTO.toBookingLinkInsertRequest(dto, DEFAULT_ZONE, Optional.empty());
+            return CreateBookingLinkRequestDTO.toBookingLinkInsertRequest(dto, DEFAULT_ZONE, Optional::empty);
         } catch (IllegalArgumentException e) {
             throw badRequest(e.getMessage(), e);
         } catch (Exception e) {

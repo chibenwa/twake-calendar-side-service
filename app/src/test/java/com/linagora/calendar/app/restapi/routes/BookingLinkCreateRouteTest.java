@@ -35,6 +35,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.apache.http.HttpStatus;
@@ -45,6 +46,8 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.multibindings.Multibinder;
 import com.linagora.calendar.api.booking.AvailabilityRule.FixedAvailabilityRule;
 import com.linagora.calendar.api.booking.AvailabilityRule.WeeklyAvailabilityRule;
@@ -61,9 +64,11 @@ import com.linagora.calendar.dav.DavTestHelper;
 import com.linagora.calendar.dav.SabreDavExtension;
 import com.linagora.calendar.restapi.RestApiServerProbe;
 import com.linagora.calendar.storage.CalendarURL;
+import com.linagora.calendar.storage.MailboxSessionUtil;
 import com.linagora.calendar.storage.OpenPaaSUser;
 import com.linagora.calendar.storage.booking.BookingLink;
 import com.linagora.calendar.storage.booking.BookingLinkPublicId;
+import com.linagora.calendar.storage.configuration.ConfigurationEntry;
 
 import io.restassured.RestAssured;
 import io.restassured.authentication.PreemptiveBasicAuthScheme;
@@ -915,5 +920,89 @@ class BookingLinkCreateRouteTest {
             .statusCode(HttpStatus.SC_CREATED);
 
         assertThat(bookingLinkProbe.listBookingLinks(delegate.username())).hasSize(1);
+    }
+
+    @Test
+    void shouldMapSundayFromZeroBasedBusinessHoursWhenBuildingDefaultAvailabilityRules() {
+        // Frontend stores days of week with the 0-6 convention (0 = Sunday), whereas DayOfWeek is ISO 1-7.
+        persistBusinessHours("""
+            [{
+                "start": "9:0",
+                "end": "17:0",
+                "daysOfWeek": [0, 6]
+            }]""");
+
+        String publicId = given()
+            .body("""
+                {
+                    "calendarUrl": "%s",
+                    "durationMinutes": 30,
+                    "active": true
+                }
+                """.formatted(CalendarURL.from(openPaaSUser.id()).asUri().toString()))
+        .when()
+            .post("/api/booking-links")
+        .then()
+            .statusCode(HttpStatus.SC_CREATED)
+            .extract().jsonPath().getString("bookingLinkPublicId");
+
+        BookingLink stored = bookingLinkProbe.findBookingLink(openPaaSUser.username(), new BookingLinkPublicId(UUID.fromString(publicId)));
+
+        ZoneId europeParis = ZoneId.of("Europe/Paris");
+        LocalTime start = LocalTime.of(9, 0);
+        LocalTime end = LocalTime.of(17, 0);
+        assertThat(stored.availabilityRules()).isEqualTo(Optional.of(AvailabilityRules.of(
+            new WeeklyAvailabilityRule(DayOfWeek.SUNDAY, start, end, europeParis),
+            new WeeklyAvailabilityRule(DayOfWeek.SATURDAY, start, end, europeParis)
+        )));
+    }
+
+    @Test
+    void shouldCreateBookingLinkWithRequestRulesEvenWhenDefaultBusinessHoursAreInvalid() {
+        // Default availability rules must not be evaluated when the request supplies its own rules,
+        // so a broken business hours setting cannot block creation.
+        persistBusinessHours("""
+            [{
+                "start": "9:0",
+                "end": "17:0",
+                "daysOfWeek": [8]
+            }]""");
+
+        String publicId = given()
+            .body("""
+                {
+                    "calendarUrl": "%s",
+                    "durationMinutes": 30,
+                    "active": true,
+                    "availabilityRules": [
+                        {"type": "weekly", "dayOfWeek": "MON", "start": "21:00", "end": "23:00", "timeZone": "Europe/Paris"}
+                    ]
+                }
+                """.formatted(CalendarURL.from(openPaaSUser.id()).asUri().toString()))
+        .when()
+            .post("/api/booking-links")
+        .then()
+            .statusCode(HttpStatus.SC_CREATED)
+            .extract().jsonPath().getString("bookingLinkPublicId");
+
+        BookingLink stored = bookingLinkProbe.findBookingLink(openPaaSUser.username(), new BookingLinkPublicId(UUID.fromString(publicId)));
+
+        assertThat(stored.availabilityRules()).isEqualTo(Optional.of(AvailabilityRules.of(
+            new WeeklyAvailabilityRule(DayOfWeek.MONDAY, LocalTime.of(21, 0), LocalTime.of(23, 0), ZoneId.of("Europe/Paris"))
+        )));
+    }
+
+    private void persistBusinessHours(String businessHoursJson) {
+        calendarDataProbe.persistConfiguration(
+            Set.of(ConfigurationEntry.of("core", "businessHours", toJsonNode(businessHoursJson))),
+            MailboxSessionUtil.create(openPaaSUser.username()));
+    }
+
+    private static JsonNode toJsonNode(String json) {
+        try {
+            return new ObjectMapper().readTree(json);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to deserialize JSON", e);
+        }
     }
 }

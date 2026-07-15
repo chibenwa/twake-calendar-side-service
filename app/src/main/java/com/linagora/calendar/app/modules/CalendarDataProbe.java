@@ -23,6 +23,7 @@ import static org.awaitility.Durations.ONE_HUNDRED_MILLISECONDS;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import jakarta.inject.Inject;
 
@@ -148,6 +149,10 @@ public class CalendarDataProbe implements GuiceProbe {
 
     public List<ConfigurationEntry> retrieveConfiguration(MailboxSession session) {
         return userConfigurationDAO.retrieveConfiguration(session).collectList().block();
+    }
+
+    public void persistConfiguration(Set<ConfigurationEntry> configurationEntries, MailboxSession session) {
+        userConfigurationDAO.persistConfiguration(configurationEntries, session).block();
     }
 
     public OpenPaaSId saveUploadedFile(Username username, Upload upload) {

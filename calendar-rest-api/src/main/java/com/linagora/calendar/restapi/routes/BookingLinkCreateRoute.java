@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
@@ -74,7 +75,7 @@ public class BookingLinkCreateRoute extends CalendarRoute {
 
         public static BookingLinkInsertRequest toBookingLinkInsertRequest(CreateBookingLinkRequestDTO request,
                                                                           ZoneId defaultZone,
-                                                                          Optional<AvailabilityRules> defaultAvailabilityRules) {
+                                                                          Supplier<Optional<AvailabilityRules>> defaultAvailabilityRules) {
             Preconditions.checkArgument(!Strings.isNullOrEmpty(request.calendarUrl), "'calendarUrl' is required");
             Preconditions.checkArgument(!Objects.isNull(request.durationMinutes), "'durationMinutes' is required");
             Preconditions.checkArgument(request.durationMinutes > 0, "'durationMinutes' must be positive");
@@ -83,7 +84,7 @@ public class BookingLinkCreateRoute extends CalendarRoute {
             CalendarURL calendarURL = CalendarURL.parse(request.calendarUrl);
             Duration duration = Duration.ofMinutes(request.durationMinutes);
 
-            Optional<AvailabilityRules> availabilityRules = getAvailabilityRules(request, defaultZone).or(() -> defaultAvailabilityRules);
+            Optional<AvailabilityRules> availabilityRules = getAvailabilityRules(request, defaultZone).or(defaultAvailabilityRules);
 
             return new BookingLinkInsertRequest(calendarURL, duration, request.active,
                 request.autoAccept.orElse(BookingLinkInsertRequest.AUTO_ACCEPT), availabilityRules,
@@ -135,7 +136,7 @@ public class BookingLinkCreateRoute extends CalendarRoute {
             .map(this::parseRequest)
             .flatMap(dto -> settingsResolver.resolveOrDefault(session.getUser())
                 .map(resolvedSettings ->
-                    CreateBookingLinkRequestDTO.toBookingLinkInsertRequest(dto, resolvedSettings.zoneId(), getDefaultAvailabilityRules(resolvedSettings))))
+                    CreateBookingLinkRequestDTO.toBookingLinkInsertRequest(dto, resolvedSettings.zoneId(), () -> getDefaultAvailabilityRules(resolvedSettings))))
             .flatMap(insertRequest ->
                 validateCalendarAccess(insertRequest.calendarUrl(), session)
                     .thenReturn(insertRequest))
@@ -179,8 +180,14 @@ public class BookingLinkCreateRoute extends CalendarRoute {
         LocalTime start = LocalTime.parse(dto.start(), BUSINESS_HOURS_TIME_FORMATTER);
         LocalTime end = LocalTime.parse(dto.end(), BUSINESS_HOURS_TIME_FORMATTER);
         return dto.daysOfWeek().stream()
-            .map(DayOfWeek::of)
+            .map(BookingLinkCreateRoute::toDayOfWeek)
             .map(day -> (AvailabilityRule) new AvailabilityRule.WeeklyAvailabilityRule(day, start, end, zoneId))
             .toList();
+    }
+
+    private static DayOfWeek toDayOfWeek(int day) {
+        // Business hours settings carry the 0-6 convention (0 = Sunday) used by the frontend,
+        // whereas DayOfWeek.of expects ISO 1-7. Map Sunday accordingly while keeping ISO values valid.
+        return day == 0 ? DayOfWeek.SUNDAY : DayOfWeek.of(day);
     }
 }

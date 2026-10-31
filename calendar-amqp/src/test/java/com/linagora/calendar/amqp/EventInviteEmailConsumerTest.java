@@ -74,6 +74,7 @@ import org.awaitility.Awaitility;
 import org.awaitility.core.ConditionFactory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.fge.lambdas.Throwing;
 import com.google.common.collect.ImmutableMap;
 import com.linagora.calendar.smtp.EventEmailFilter;
@@ -361,6 +362,27 @@ public class EventInviteEmailConsumerTest {
         assertThat(getHtml(smtpMailsResponse))
             .contains(">Subject</p>", "Twake Calendar - Sprint planning #04")
             .contains(">Recipient address</p>", INVALID_RECIPIENT);
+        assertThat(deadLetteredMessageCount()).isZero();
+    }
+
+    @Test
+    void shouldNotifyOrganizerWhenNewInvitationHasNoRecipientEmail() throws Exception {
+        String eventUid = UUID.randomUUID().toString();
+        ObjectNode message = new ObjectMapper().createObjectNode()
+            .put("senderEmail", organizer.username().asString())
+            .putNull("recipientEmail")
+            .put("method", Method.VALUE_REQUEST)
+            .put("event", generateCalendarData(eventUid, organizer.username().asString(), "Pro", PartStat.NEEDS_ACTION))
+            .put("eventPath", "/calendars/" + organizer.id().value() + "/" + organizer.id().value() + "/" + eventUid + ".ics")
+            .put("isNewEvent", IS_NEW_EVENT);
+        publishNotificationEmailMessage(message.toString());
+
+        awaitAtMost.atMost(Duration.ofSeconds(20))
+            .untilAsserted(() -> assertThat(smtpMailsResponseSupplier.get().getList("")).hasSize(1));
+
+        JsonPath smtpMailsResponse = smtpMailsResponseSupplier.get();
+        assertThat(smtpMailsResponse.getString("[0].recipients[0].address")).isEqualTo(organizer.username().asString());
+        assertThat(TestFixture.extractSubject(smtpMailsResponse.getString("[0].message"))).isEqualTo("Email delivery failed");
         assertThat(deadLetteredMessageCount()).isZero();
     }
 

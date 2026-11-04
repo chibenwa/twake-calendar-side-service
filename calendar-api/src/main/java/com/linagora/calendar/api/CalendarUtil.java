@@ -273,13 +273,21 @@ public class CalendarUtil {
                 .withPropertyFactorySupplier(CalendarUtil::propertyFactories),
             new CustomizedTimeZoneRegistry());
         try {
-            ByteArrayInputStream inputStream = new ByteArrayInputStream(icsContent);
+            ByteArrayInputStream inputStream = new ByteArrayInputStream(withLiteralParameterBackslashes(icsContent));
             return builder.build(inputStream);
         } catch (IOException e) {
             throw new RuntimeException("Error while reading calendar input", e);
         } catch (ParserException e) {
             throw new RuntimeException("Error while parsing ICal object", e);
         }
+    }
+
+    private static byte[] withLiteralParameterBackslashes(byte[] icsContent) {
+        if (!ParameterBackslashes.mayNeedRewrite(icsContent)) {
+            return icsContent;
+        }
+        return ParameterBackslashes.rewrite(new String(icsContent, StandardCharsets.UTF_8))
+            .getBytes(StandardCharsets.UTF_8);
     }
 
     /**
@@ -295,16 +303,32 @@ public class CalendarUtil {
     /**
      * Returns a deep copy of the given calendar.
      *
-     * <p>Unlike {@link Calendar#copy()}, which re-creates every property through its factory and thus fails on
-     * properties kept by relaxed parsing (unknown properties, malformed values), this re-parses the serialized calendar.
+     * <p>Unlike {@link Calendar#copy()}, this does not fail on properties kept by relaxed parsing (unknown properties,
+     * malformed values): see {@link #copy(VEvent)}. Nor does it go through the serialized calendar, which ical4j does
+     * not read back as written (eg backslashes of parameter values). Components other than VEVENT are copied by ical4j
+     * when it can, shared otherwise.
      *
      * @throws IllegalArgumentException when the calendar cannot be copied
      */
     public static Calendar copyOf(Calendar calendar) {
         try {
-            return parseIcs(calendar.toString());
+            return new Calendar(copyProperties(calendar.getPropertyList()),
+                new ComponentList<>(calendar.getComponents().stream()
+                    .map(CalendarUtil::copy)
+                    .toList()));
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Could not copy calendar: " + e.getMessage(), e);
+        }
+    }
+
+    private static CalendarComponent copy(CalendarComponent component) {
+        if (component instanceof VEvent vEvent) {
+            return copy(vEvent);
+        }
+        try {
+            return (CalendarComponent) component.copy();
+        } catch (RuntimeException e) {
+            return component;
         }
     }
 
